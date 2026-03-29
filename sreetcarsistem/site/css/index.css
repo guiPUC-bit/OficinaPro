@@ -1,0 +1,373 @@
+/* Variáveis de Estilo */
+:root {
+  --bg-color: #121212;
+  --card-bg: #1E1E1E;
+  --accent-color: #FF6B00;
+  --text-primary: #FFFFFF;
+  --text-secondary: #A0A0A0;
+  --transition: all 0.3s ease;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', -apple-system, sans-serif;
+}
+
+body {
+  background-color: #000;
+  min-height: 100vh;
+  margin: 0;
+}
+
+/* Shell com Sidebar (Home) */
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+  width: 100%;
+  background: var(--bg-color);
+}
+
+.sidebar {
+  width: 80px;
+  background: #16171B;
+  border-right: 1px solid rgba(255, 255, 255, 0.04);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 30px 0;
+  gap: 20px;
+  flex-shrink: 0;
+}
+
+.sidebar-icon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition);
+  position: relative;
+}
+
+.sidebar-icon svg {
+  width: 24px;
+  height: 24px;
+  stroke: currentColor;
+}
+
+.sidebar-icon:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-primary);
+}
+
+.sidebar-icon.active {
+  background: rgba(255, 107, 0, 0.15);
+  color: var(--accent-color);
+}
+
+.sidebar-icon.active::before {
+  content: '';
+  position: absolute;
+  left: -15px;
+  width: 4px;
+  height: 20px;
+  background: var(--accent-color);
+  border-radius: 0 4px 4px 0;
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  background: var(--bg-color);
+}
+
+/* Container de Aplicativo (Desktop-Friendly) */
+.app-container {
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  width: 100%;
+  max-width: 500px; /* Limite de largura estilo mobile */
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* 1. Header */
+.fixed-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background-color: var(--bg-color);
+  padding: 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #252525;
+}
+
+.brand-name {
+  font-size: 1.4rem;
+  font-weight: 800;
+  letter-spacing: -1px;
+}
+
+.accent-text {
+  color: var(--accent-color);
+}
+
+.menu-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem;
+  border-radius: 10px;
+  transition: var(--transition);
+}
+
+.menu-button:hover {
+  background: rgba(255, 107, 0, 0.12);
+}
+
+/* Helper para ícones (lucide usa stroke="currentColor") */
+.menu-button svg,
+.action-card svg,
+.stat-card svg {
+  stroke: currentColor;
+}
+
+.menu-button svg {
+  width: 28px;
+  height: 28px;
+  color: var(--accent-color);
+}
+
+/* 2. Boas-vindas */
+.content {
+  padding: 2rem 1.5rem;
+  flex-grow: 1;
+}
+
+.welcome-section {
+  margin-bottom: 2.5rem;
+}
+
+.welcome-title {
+  font-size: 2.2rem;
+  font-weight: 700;
+  color: var(--accent-color);
+  margin-bottom: 0.5rem;
+}
+
+.welcome-subtitle {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+/* 3. Botões de Ação */
+.actions-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 3rem;
+}
+
+.action-card {
+  height: 120px;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.8rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+  border: 2px solid transparent;
+  text-align: center;
+}
+
+.action-card svg {
+  width: 38px;
+  height: 38px;
+}
+
+.action-card.secondary {
+  background-color: var(--card-bg);
+  color: var(--text-primary);
+}
+
+.action-card.secondary svg {
+  color: var(--accent-color);
+}
+
+.action-card.secondary:hover {
+  border-color: var(--accent-color);
+  transform: scale(1.02);
+}
+
+.action-card.primary {
+  background-color: var(--accent-color);
+  color: #fff;
+  border-color: rgba(255, 107, 0, 0.55);
+}
+
+.action-card.primary svg {
+  color: #fff;
+}
+
+.action-card.primary:active {
+  transform: scale(0.98);
+}
+
+/* 4. Mini Dashboard */
+.dashboard-section {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.8rem;
+}
+
+.stat-card {
+  background-color: var(--card-bg);
+  padding: 1rem 0.5rem;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+.stat-card svg {
+  width: 22px;
+  height: 22px;
+  color: var(--accent-color);
+  margin-bottom: 0.15rem;
+}
+
+.stat-value {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--accent-color);
+  margin: 0.4rem 0 0.2rem 0;
+}
+
+.stat-value-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin: 0.4rem 0 0.2rem 0;
+}
+
+.stat-value-stack .stat-value {
+  margin: 0;
+}
+
+.stat-subvalue {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: #00C853;
+}
+
+.stat-subvalue svg {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  color: currentColor;
+}
+
+.stat-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  letter-spacing: 0.5px;
+}
+
+/* 5. Rodapé */
+.footer {
+  padding: 2rem;
+  text-align: center;
+  border-top: 1px solid #252525;
+}
+
+.footer p {
+  font-size: 0.75rem;
+  color: #444;
+}
+
+@media (max-width: 520px) {
+  .app-container { max-width: 100%; }
+}
+
+/* Desktop: mantém o mobile como está, mas melhora o layout para monitor */
+@media (min-width: 900px) {
+  .app-container {
+    max-width: 980px;
+    border-radius: 18px;
+    box-shadow: 0 18px 60px rgba(0,0,0,0.55);
+  }
+
+  .fixed-header {
+    padding: 2rem 2.5rem;
+  }
+
+  .brand-name {
+    font-size: 1.7rem;
+  }
+
+  .content {
+    padding: 3rem 3rem;
+  }
+
+  .welcome-title {
+    font-size: 2.8rem;
+  }
+
+  .welcome-subtitle {
+    font-size: 1rem;
+  }
+
+  .actions-section {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.2rem;
+    margin-bottom: 3.5rem;
+  }
+
+  .action-card {
+    height: 150px;
+    font-size: 1.2rem;
+  }
+
+  .dashboard-section {
+    gap: 1.1rem;
+  }
+
+  .stat-card {
+    padding: 1.2rem 0.9rem;
+  }
+
+  .stat-value {
+    font-size: 1.4rem;
+  }
+
+  .footer {
+    padding: 2.5rem;
+  }
+}

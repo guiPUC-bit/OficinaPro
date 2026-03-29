@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Oficina Pro - Home</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="css/index.css" />
+</head>
+
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-icon active" role="button" tabindex="0" aria-label="Home" onclick="window.location.href='index.html'">
+        <i data-lucide="home"></i>
+      </div>
+      <div class="sidebar-icon" role="button" tabindex="0" aria-label="Fluxo de Serviços" onclick="window.location.href='pages/kanban.html'">
+        <i data-lucide="users"></i>
+      </div>
+      <div class="sidebar-icon" role="button" tabindex="0" aria-label="Sair" style="margin-top:auto">
+        <i data-lucide="log-out"></i>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <div class="app-container">
+        <!-- 1. HEADER FIXO -->
+        <header class="fixed-header">
+          <h1 class="brand-name">Oficina<span class="accent-text">Pro</span></h1>
+
+          <button class="menu-button" type="button" aria-label="Menu">
+            <i data-lucide="menu"></i>
+          </button>
+        </header>
+
+        <main class="content">
+          <!-- 2. SEÇÃO DE BOAS-VINDAS -->
+          <section class="welcome-section">
+            <h2 class="welcome-title">Bem-vindo</h2>
+            <p class="welcome-subtitle">Gerencie sua oficina com precisão e agilidade.</p>
+          </section>
+
+          <!-- 3. AÇÕES PRINCIPAIS -->
+          <section class="actions-section">
+            <button class="action-card secondary" type="button" onclick="window.location.href='pages/kanban.html'">
+              <i data-lucide="users"></i>
+              <span>Clientes / Orçamentos</span>
+            </button>
+
+            <button
+              class="action-card primary"
+              type="button"
+              onclick="window.location.href='pages/novo-orcamento.html'"
+            >
+              <i data-lucide="plus-circle"></i>
+              <span>Criar Novo Orçamento</span>
+            </button>
+          </section>
+
+          <!-- 4. MINI DASHBOARD -->
+          <section class="dashboard-section">
+            <div class="stat-card">
+              <i data-lucide="calendar"></i>
+              <span id="metric-orcamentos-dia" class="stat-value">—</span>
+              <span class="stat-label">Orçamentos/Semana</span>
+            </div>
+
+            <div class="stat-card">
+              <i data-lucide="dollar-sign"></i>
+              <div class="stat-value-stack">
+                <span id="metric-total-bruto" class="stat-value">—</span>
+                <span id="metric-total-lucro" class="stat-subvalue">
+                  <i data-lucide="trending-up"></i>
+                  <span id="metric-total-lucro-value">—</span>
+                </span>
+              </div>
+              <span class="stat-label">Bruto / Lucro (Concluído)</span>
+            </div>
+
+            <div class="stat-card">
+              <i data-lucide="user-check"></i>
+              <span id="metric-atendidos" class="stat-value">—</span>
+              <span class="stat-label">Clientes Concluídos</span>
+            </div>
+          </section>
+        </main>
+
+        <!-- 5. RODAPÉ -->
+        <footer class="footer">
+          <p>© 2026 Oficina Pro System</p>
+        </footer>
+      </div>
+    </main>
+  </div>
+
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script>
+    // Gera os SVGs dos ícones usando os atributos data-lucide.
+    lucide.createIcons();
+  </script>
+  <script src="js/dashboard.js"></script>
+</body>
+</html>

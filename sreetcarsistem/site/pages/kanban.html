@@ -1,0 +1,914 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Oficina Pro - Dashboard Profissional</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="../css/index.css" />
+  <link rel="stylesheet" href="../css/kanban.css" />
+</head>
+
+<body>
+  <div id="root"></div>
+
+  <!-- Bibliotecas via CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.3/html2pdf.bundle.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    // --- COMPONENTES AUXILIARES ---
+    const Icon = ({ name, size = 16, color = "currentColor", className = "" }) => {
+      useEffect(() => {
+        if (window.lucide) window.lucide.createIcons();
+      }, [name]);
+      return <i data-lucide={name} style={{ width: size, height: size, color }} className={className}></i>;
+    };
+
+    const formatCurrency = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0);
+
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
+
+    const getDamagedPartsFromBudget = (orcamento) => {
+      if (Array.isArray(orcamento?.itens) && orcamento.itens.length) {
+        const parts = [];
+        for (const it of orcamento.itens) {
+          if (!it) continue;
+          if (it.tipo === 'grupo') {
+            const pecas = Array.isArray(it.pecas) ? it.pecas : [];
+            for (const p of pecas) {
+              if (p?.nome) parts.push(p.nome);
+            }
+            continue;
+          }
+          if (it.parte) parts.push(it.parte);
+        }
+        return parts;
+      }
+      return orcamento?.danos || [];
+    };
+
+    const svgToDataUrl = (damagedParts = []) => {
+      const container = document.createElement('div');
+      container.innerHTML = CAR_SVG_HTML;
+      const svg = container.querySelector('svg');
+      if (!svg) return null;
+
+      svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      svg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+      svg.setAttribute('width', '560');
+      svg.removeAttribute('height');
+
+      const normalized = (damagedParts || []).map(p => String(p).toLowerCase());
+      const set = new Set(normalized);
+
+      const parts = svg.querySelectorAll('[data-parte]');
+      parts.forEach(el => {
+        const parte = (el.getAttribute('data-parte') || '').toLowerCase();
+        const isMatch =
+          set.has(parte) ||
+          Array.from(set).some(d => d && (parte.includes(d) || d.includes(parte)));
+
+        if (isMatch) {
+          el.setAttribute('fill', '#ff6a00');
+          el.setAttribute('stroke', '#ff6a00');
+          el.setAttribute('stroke-width', '3');
+        } else {
+          el.setAttribute('fill', '#666666');
+          el.setAttribute('stroke', '#999999');
+          el.setAttribute('stroke-width', '1.5');
+        }
+      });
+
+      const bases = svg.querySelectorAll('.car-base-outline');
+      bases.forEach(b => {
+        b.setAttribute('fill', '#252525');
+        b.setAttribute('stroke', '#444444');
+        b.setAttribute('stroke-width', '5');
+      });
+
+      try {
+        const serializer = new XMLSerializer();
+        const svgStr = serializer.serializeToString(svg);
+        const svg64 = btoa(unescape(encodeURIComponent(svgStr)));
+        return `data:image/svg+xml;base64,${svg64}`;
+      } catch {
+        return null;
+      }
+    };
+
+    const fileSafeSegment = (value) => {
+      const raw = String(value || '').trim();
+      if (!raw) return '';
+      const norm = typeof raw.normalize === 'function' ? raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '') : raw;
+      const cleaned = norm
+        .replace(/[<>:"/\\|?*\x00-\x1F]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/[^a-zA-Z0-9-_]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^[-_]+|[-_]+$/g, '');
+      return cleaned.slice(0, 60);
+    };
+
+    const buildPdfFilename = (orcamento) => {
+      const nome = fileSafeSegment(orcamento?.cliente?.nome || orcamento?.cliente);
+      const modelo = fileSafeSegment(orcamento?.veiculo?.modelo || orcamento?.veiculo);
+      const parts = ['orc', nome, modelo].filter(Boolean);
+      const base = parts.length > 1 ? parts.join('-') : `orc-${fileSafeSegment(orcamento?.id) || 'orcamento'}`;
+      return `${base}.pdf`;
+    };
+
+    const downloadBudgetPdf = async (orcamento) => {
+      if (typeof html2pdf === 'undefined') {
+        alert('Não foi possível gerar o PDF. Recarregue a página.');
+        return;
+      }
+
+      const valorTotal = orcamento.total || orcamento.valor || 0;
+      const damaged = getDamagedPartsFromBudget(orcamento);
+      const carImg = svgToDataUrl(damaged);
+
+      const itens = Array.isArray(orcamento.itens) ? orcamento.itens : [];
+      const danos = Array.isArray(orcamento.danos) ? orcamento.danos : [];
+
+      const rows = (() => {
+        if (itens.length) {
+          return itens.map((it) => {
+            if (it?.tipo === 'grupo') {
+              const pecasTxt = (it.pecas || []).map(p => p.nome).filter(Boolean).join(' • ');
+              return `
+                <tr>
+                  <td>Grupo (${(it.pecas || []).length})</td>
+                  <td>${esc(pecasTxt || '—')}</td>
+                  <td style="text-align:right;">${formatCurrency(it.valorTotal)}</td>
+                </tr>
+              `;
+            }
+            const serv = [it?.tipo || '—', ...((it?.servicos) || [])].join(' + ');
+            return `
+              <tr>
+                <td>${esc(it?.parte || '—')}</td>
+                <td>${esc(serv || '—')}</td>
+                <td style="text-align:right;">${formatCurrency(it?.maoDeObra || 0)}</td>
+              </tr>
+            `;
+          }).join('');
+        }
+        if (danos.length) {
+          const per = danos.length ? (valorTotal / danos.length) : valorTotal;
+          return danos.map(d => `
+            <tr>
+              <td>${esc(d)}</td>
+              <td>Reparo Técnico</td>
+              <td style="text-align:right;">${formatCurrency(per)}</td>
+            </tr>
+          `).join('');
+        }
+        return `<tr><td colspan="3" style="text-align:center; color:#777;">Nenhum item</td></tr>`;
+      })();
+
+      const tmp = document.createElement('div');
+      tmp.style.width = '700px';
+      tmp.style.background = '#fff';
+      tmp.style.color = '#111';
+      tmp.style.padding = '24px';
+      tmp.style.boxSizing = 'border-box';
+      tmp.style.fontFamily = "Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+      tmp.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #eee; padding-bottom:12px; margin-bottom:18px;">
+          <div style="font-weight:900; font-size:22px;">Oficina<span style="color:#ff6a00">Pro</span></div>
+          <div style="text-align:right;">
+            <div style="font-weight:900; font-size:18px;">Orçamento - ${esc(orcamento.cliente?.nome || orcamento.cliente || '—')}</div>
+            <div style="color:#666;">Nº: ${esc(orcamento.id)}</div>
+            <div style="color:#666;">Data: ${esc(orcamento.date || new Date().toLocaleDateString('pt-BR'))}</div>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px 18px; margin-bottom:16px;">
+          <div><div style="font-size:12px; color:#666; text-transform:uppercase;">Cliente</div><div style="font-weight:800;">${esc(orcamento.cliente?.nome || orcamento.cliente || '—')}</div></div>
+          <div><div style="font-size:12px; color:#666; text-transform:uppercase;">Telefone</div><div style="font-weight:800;">${esc(orcamento.cliente?.telefone || '—')}</div></div>
+          <div><div style="font-size:12px; color:#666; text-transform:uppercase;">Veículo</div><div style="font-weight:800;">${esc((orcamento.veiculo?.fabricante || '') + ' ' + (orcamento.veiculo?.modelo || orcamento.veiculo || ''))}</div></div>
+          <div><div style="font-size:12px; color:#666; text-transform:uppercase;">Placa / Cor</div><div style="font-weight:800;">${esc((orcamento.veiculo?.placa || orcamento.placa || '—') + ' • ' + (orcamento.veiculo?.cor || '—'))}</div></div>
+        </div>
+
+        <div style="border:1px solid #eee; border-radius:12px; padding:10px; display:flex; justify-content:center; margin-bottom:16px;">
+          ${carImg ? `<img src="${carImg}" alt="Diagrama do carro" style="max-width:560px; width:100%; height:auto; display:block;" />` : '<div style="text-align:center; color:#999; padding:24px;">Sem diagrama</div>'}
+        </div>
+
+        <table style="width:100%; border-collapse:collapse; border:1px solid #eee; table-layout:fixed;">
+          <thead>
+            <tr>
+              <th style="background:#f7f7f7; border:1px solid #eee; padding:8px 10px; text-align:left;">Peça</th>
+              <th style="background:#f7f7f7; border:1px solid #eee; padding:8px 10px; text-align:left;">Serviço</th>
+              <th style="background:#f7f7f7; border:1px solid #eee; padding:8px 10px; text-align:right;">Valor</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+
+        <div style="margin-top:12px; border-top:2px solid #eee; padding-top:12px;">
+          <div style="display:flex; justify-content:space-between; font-weight:900; font-size:16px;">
+            <span>Valor Total</span>
+            <span>${formatCurrency(valorTotal)}</span>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(tmp);
+      tmp.style.position = 'fixed';
+      tmp.style.left = '50%';
+      tmp.style.top = '0';
+      tmp.style.transform = 'translateX(-50%)';
+      tmp.style.zIndex = '9999';
+
+      const opt = {
+        margin: 8,
+        filename: buildPdfFilename(orcamento),
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: tmp.scrollWidth, windowHeight: tmp.scrollHeight },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+
+      try {
+        await html2pdf().set(opt).from(tmp).save();
+      } finally {
+        document.body.removeChild(tmp);
+      }
+    };
+
+    const PDF_STORE_KEY = 'oficinaPro_orcamentoPdfs';
+    const loadPdfStore = () => {
+      try {
+        const raw = localStorage.getItem(PDF_STORE_KEY);
+        const parsed = raw ? JSON.parse(raw) : {};
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch {
+        return {};
+      }
+    };
+
+    const savePdfStore = (store) => {
+      localStorage.setItem(PDF_STORE_KEY, JSON.stringify(store));
+    };
+
+    const dataUriToBlobUrl = (dataUri) => {
+      try {
+        const [meta, data] = String(dataUri).split(',');
+        const isBase64 = meta.includes('base64');
+        const mime = (meta.match(/data:([^;]+)/) || [])[1] || 'application/pdf';
+        let bytes;
+        if (isBase64) {
+          const bin = atob(data);
+          bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        } else {
+          const txt = decodeURIComponent(data);
+          bytes = new TextEncoder().encode(txt);
+        }
+        const blob = new Blob([bytes], { type: mime });
+        return URL.createObjectURL(blob);
+      } catch {
+        return null;
+      }
+    };
+
+    const CAR_SVG_HTML = `
+      <svg viewBox="0 0 1200 1300" class="car-svg-ativo" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Diagrama de Avarias">
+        <defs>
+          <linearGradient id="grad-body" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" style="stop-color:#2a2a2a;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#1a1a1a;stop-opacity:1" />
+          </linearGradient>
+        </defs>
+
+        <g transform="translate(605, 130) scale(0.60) rotate(180) translate(-350, -270)">
+          <path id="f_base_carro" class="car-base-outline" d="M546,425c-15.58,0-35.55,1.741-50-4H398c-82.895,0-172.89.6-247,4,0.418,16.332,3.316,44.2-4,54-9.43,12.632-57.532,9.747-65-2-6.021-9.471-6.2-47.784-4-66,7.895-65.418-23.845-169.478,12-225v-1c-30.288-.967-67.534-7.545-67-40,8.179-16.882,54.554-36.378,71-12,5.588,8.284.121,22.458,11,26,16.307-37.566,40.019-113.93,71-134,18.15-11.758,50.084-4.839,76-9,46.135-7.408,147.123-8.1,194,0,24.829,4.291,55.779-2.966,74,8,24.3,14.624,47.121,73.16,59,102,4.483,10.884,6.425,25.992,14,34l6-4c-1.346-45.985,65.562-39.713,75-13,13.327,37.722-44.937,34.058-67,43l2,2,14,25c4.657,16.18,3.786,47.3,1,65-5.891,37.423-6.006,71.977-6,113,0,19.766,4.718,73.992-3,86-6.235,9.7-46.457,15.03-60,6C542.422,474.614,545.559,445.944,546,425Z" fill="#252525" stroke="#444" stroke-width="5"/> 
+          <path id="f_parachoque" class="car-part-active" data-parte="Para-choque Dianteiro" d="M78,268c8.237,11.107,9.921,25.831,21,34,20.89,15.4,57.823,16.916,85,25l62,25H454l78-19c17.561-4.789,35.8-6.664,50-15,20.39-11.969,22.148-31.011,37-48,0.337,47.529-9.533,93.991-13,138l-10,8H222c-30.658,0-105.358,8.765-126-4C81.8,375.867,78.261,315.122,78,268Z"/> 
+          <path id="f_farol_e" class="car-part-active" data-parte="Farol Esq" d="M133.185,233.524l-34.472,2.09c-20.683,43.49,64.3,61.522,98.2,54.32q0.522-1.566,1.045-3.133c3.11-7.663-1.122-17.911-3.134-24.027a42.153,42.153,0,0,0-5.574-11.219C184.391,230.423,133.185,233.524,133.185,233.524Z"/> 
+          <path id="f_farol_d" class="car-part-active" data-parte="Farol Dir" d="M566.815,233.524l34.472,2.09c20.684,43.49-64.3,61.522-98.2,54.32q-0.522-1.566-1.045-3.133c-3.11-7.663,1.122-17.911,3.134-24.027a42.153,42.153,0,0,1,5.574-11.219C515.609,230.423,566.815,233.524,566.815,233.524Z"/> 
+          <path id="f_retrovisor_d" class="car-part-active" data-parte="Retrovisor Direito" d="M57,127c15.672-3.325,50.644,4.592,34,41-7.117,15.513-70.049,8.565-62-27C38.357,134.9,41.328,130.325,57,127Z"/> 
+          <path id="f_retrovisor_e" class="car-part-active" data-parte="Retrovisor Esquerdo" d="M640.7,127c-15.671-3.325-50.643,4.592-34,41,7.117,15.513,70.049,8.565,62-27C659.344,134.9,656.373,130.325,640.7,127Z"/> 
+          <path id="f_parabrisa" class="car-part-active" data-parte="Para-brisa (Frente)" d="M294,50c222.825-1.289,226.083,5.75,227,10,7.008,17.963,50.517,97.276,35,99s-211.344-.667-317-1c-12.13,0-97.816,5.251-101-1-4.052-7.953,5.218-20.613,7-25,10.507-25.869,18.9-51.962,33-74,24.354-5.656,56.145-2.971,83-7Z"/> 
+        </g>
+
+        <g transform="translate(640, 645) scale(0.50) rotate(90) translate(-760, -275)">
+          <path id="base_carro" class="car-base-outline" d="M567,28l23,1q0.5,2,1,4c-4.876,13.211-22.975,32.544-17,45l449-1c104.21,0,213.1-3.524,298,14,43.41,8.961,93.7-5.41,121,17,32.36,26.558,43.59,230.911,35,299-6.68,52.9-2.04,121.97-21,166-20.15,46.782-86.96,22.84-140,37-60.83,16.239-149.62,11.982-225,11l-375,1H569q-0.5,2-1,4l22,39c-40.87,13.487-75.977-19.213-92-44-87.384,6.886-292.324,16.316-343-23C32.89,503.264,33.959,188.9,159,98,233.8,43.627,400.133,92.679,500,77,517.077,50.6,536.264,41.318,567,28Z" fill="#252525" stroke="#444" stroke-width="5"/> 
+          <path id="t_teto" class="car-part-active" data-parte="Teto" d="M662,184l118,11,125,5c76.773,9.494,154.05-6.373,225-7,7.5,99.11,12.51,215.988,0,315-148.936-7.032-327.742-18.8-468,9v-3C632.026,443.479,640.427,256.872,662,184Z"/> 
+          <path id="t_porta_malas" class="car-part-active" data-parte="Porta-malas (Topo)" d="M1330,131c28.17-.316,68.56,1.813,81,18,48.19,62.689,47.62,341.84-1,403-12.58,15.82-82.19,24.306-104,10v-1c48.58-45.131,44-309.44,21-389-4.48-15.491-13.83-23.258-21-35Z"/> 
+          <path id="t_capo" class="car-part-active" data-parte="Capô" d="M424,132h5v4c-72.6,50-72.995,243.432-47,344,6.093,23.571,17.846,50.986,31,69l17,19c-35.593-4.034-89.182-46.68-131-59-58.974-17.375-124.787-15.86-194-28-25.328-75.938-32.049-187.426,1-262C237.23,219.5,340.83,180.633,424,132Z"/> 
+        </g>
+
+        <g transform="translate(325, 665) scale(0.50, 0.50) rotate(90) translate(-760, -250)">
+          <path id="Base_esquerda" class="car-base-outline" d="M883,11l70,1c53.85,8.721,106.43,6.139,153,20,50.86,15.139,100.34,34.151,143,59q36,20,72,40c35.13,12.474,78.83,2.587,119,10,13.99,20.069,17.71,47.429-1,64q4.005,26,8,52,3.495,4,7,8c3.31,8.68-3.43,22.845,2,29,29.9,30.786,4.9,45.225-4,74-4.44,14.365-2.06,31.428-13,39-15.92,11.022-48.35,6.512-71,10-14.41,2.219-51.15,9.027-61,0-4.24-2.79-6.08-7.973-7-14-7.36.271-15.48,0.182-20-2,0.41-22.677.43-44.491-6-63-20.35-58.564-99-104.542-169-62-31.62,19.215-49.58,51.343-58,94q-1.5,22.5-3,45H459c0.554-35.59-3.343-63.034-14-87-26.93-60.559-109.753-89.862-173-43-24.438,18.107-40.66,45.706-48,81-3.468,16.675,2.786,47.4-5,61-45.925-11.434-158.074,14.216-170-28-3.066-10.853,7.933-10.979,10-17V361H50l-1-52,12-11,1-20c2.79-15.423,8.028-26.914,16-37,38.739-49.011,166.423-68.22,244-83l64-3c31.172-8.757,63.081-31.229,90-47,57.748-33.832,121.674-62.862,194-80,44.345-10.508,97.2-7.327,143-15ZM328,274c146.619-2.608,155.2,182.455,32,207-73.915,14.726-142.954-60.709-119-133C257.6,297.919,281.51,293.211,328,274Zm824,0c147.89-2.731,152.63,185.849,23,208-76.6,13.09-136.38-74.406-109-142,10.59-26.14,31.74-48.567,58-59Z" fill="#252525" stroke="#444" stroke-width="5"/> 
+          <path id="Lateral_Esquerdo" class="car-part-active" data-parte="Lateral Esquerda" d="M1394,161s-24.69,16.446-21,28c-29.05,2.709-79.22.8-59,42s110,22,110,22c4.32,22.13-1.87,27.68,39,53,1.58,4.777,3.71,30.325-4,39s-133.61,12.027-160,57c-13.52,1.8-19,0-19,0s9.07-66.062-27-105c-54.18-58.487-166.06-78.2-211,100-38.5-.524-72-1-72-1v-4s35.44,7.246,73-74c6.74-14.583,17.04-23.354,35-46,34.42-26.751,70.67-37.311,67-76s-21.12-89.191-50-110-79-42-79-42l6-11s64.95-20.411,253,107C1279.34,142.937,1352.8,158.387,1394,161Z"/> 
+          <path id="vidro_traseriro_Esquerdo" class="car-part-active" data-parte="Vidro Traseiro Esq" d="M845,49c63.06-.914,175.79-1.171,207,32q-1.995,32-4,64L837,157Q841,103.006,845,49Zm220,39a105.408,105.408,0,0,1,47,53l-51,3Q1062.995,116,1065,88Z"/> 
+          <path id="vidro_dianteiro_Esquerdo" class="car-part-active" data-parte="Vidro Dianteiro Esq" d="M800,50h5L785,161,556,175l2-1c2.528-4.363,5.2-15.38,9-19,6.914-3.455,12.125-3.27,15-11,5.529-15.028-25.494-19.585-35-17,6.314-8.537,19.677-12.418,29-18,41.3-24.729,82.773-41.3,140-52Z"/> 
+          <path id="porta_traseira_Esquerda" class="car-part-active" data-parte="Porta Traseira Esq" d="M815,162l237-14q2.505-33,5-66c0.67,0.667,1.33,1.333,2,2h2q-1.995,32-4,64h10l50-4v-1c-19.4-54.3-74.74-81.353-137-93l-72-4-67-1q-4,55.994-8,112l-17,1q6.5-58.993,13-118c108.8-11.227,218.15,5.9,270,63,11.05,12.17,24.58,25.537,27,46L815,167v-5Zm2,219c-0.088-62.462-10.123-151.99-2-211l313-18c4.05,12.918,14.78,28.071,12,46-5.99,38.689-36.17,45.658-61,65l-33,39c-12.09,18.144-35.05,72.294-55,78Zm248-204c-6.32,3.144-5.92,1.73-10,7-0.24,3.477-4.89,5.835-8,5-9.21,5.879-25.55,1.9-18,16,8.2,1.209,23.29-5.656,27,1,3.52,6.31,10.37,12.272,24,6,5.89-2.711,9.36-6.48,14-9,7.59-4.121,15.34-1.2,21-5,0.33-1,.67-2,1-3-0.66-5.846-1.62-7.985-6-10-5.21-.409-7.95.07-15,0C1079.49,184.846,1089.65,176.937,1065,177Z"/> 
+          <path id="porta_dianteira_Esquerda" class="car-part-active" data-parte="Porta Dianteira Esq" d="M825,40q-9,81.992-18,164q3,88.491,6,177l-222,2c-33.714,0-76.579,6.526-96-5-8.511-23.244-9.475-54.846-17-79-8.13-26.1-24.1-50.011-27-78-1.5-14.481,0-44.818,5-52L580,93C644.333,56.071,723.82,39.69,825,40ZM790,164q10.5-59.494,21-119c-91.327,1.069-168.732,17.859-227,52-15.656,9.174-31.675,23.082-47,31-25.431,13.139-25.187,8.23-44,29-0.293,8.783,1.039,13.09,4,18,27.464,10.795,66.952,6.285,101,1Zm-39,22a16.206,16.206,0,0,0-13,14c-0.739,6.273-15.511,4.545-30,7-0.008,6.328-.143,7.582,2.009,11,5.67,0.948,24.822-6.674,26.991,2,2,8,30.612,20.036,37-4-0.028.073-1.7-5.013,22-5q-0.5-4-1-8c-2.083-7.587-16.282.22-23-5C763.321,191.257,772.026,187.009,751,186Z"/> 
+          <path id="paralama_Esquerdo" class="car-part-active" data-parte="Para-lama Esq" d="M74,339c-0.311-7.455-11.895-60.75-1-83,12.557-18.393,47.471-26.033,50-19-0.315,6.071-41.49,22.982-20,50,35.653,6.573,127.886,1.048,93-48-9.046-2.784-21.681-4.54-32-5-75.943,8.913-13.684-47.461,300-80-0.5,1.13-16.769,8.15-18,19-0.4-11.367-5.907,32.271,3,64,8.157,29.058,21.526,54.458,29,86,3,18,8,39,11,57,4.45,7.679,14.064,5.012,20,11H477c1.21-83.6-55.888-142.19-128-148-14.656-1.181-76.954,13.921-211,80C139.074,350.827,122.073,338.043,74,339Z"/> 
+          <path id="roda_dianteira_esquerda_" class="car-part-active" data-parte="Roda Dianteira Esq" d="M335.451,313.31c91.565-7.176,97.794,123,19.809,134.7C269.229,460.919,246.172,336.514,335.451,313.31Z"/> 
+          <path id="roda_traseira_esquerda" class="car-part-active" data-parte="Roda Traseira Esq" d="M1156.88,311.749c14.16-.231,26.21.517,36.28,4.773,26.38,11.159,53.06,45.537,36.27,84.016-9.49,21.763-29.58,33.376-55.37,39.143-10.95,2.45-23.5-1.377-30.55-3.819-26.31-9.11-60.03-40.16-43.92-80.2a71.2,71.2,0,0,1,38.19-39.144C1143.51,314.13,1151.71,315,1156.88,311.749Z"/> 
+        </g>
+
+        <g transform="translate(880, 665) scale(-0.50, 0.50) rotate(90) translate(-760, -250)">
+          <path id="Base_direita" class="car-base-outline" d="M883,11l70,1c53.85,8.721,106.43,6.139,153,20,50.86,15.139,100.34,34.151,143,59q36,20,72,40c35.13,12.474,78.83,2.587,119,10,13.99,20.069,17.71,47.429-1,64q4.005,26,8,52q3.495,4,7,8c3.31,8.68-3.43,22.845,2,29,29.9,30.786,4.9,45.225-4,74-4.44,14.365-2.06,31.428-13,39-15.92,11.022-48.35,6.512-71,10-14.41,2.219-51.15,9.027-61,0-4.24-2.79-6.08-7.973-7-14-7.36.271-15.48,0.182-20-2,0.41-22.677.43-44.491-6-63-20.35-58.564-99-104.542-169-62-31.62,19.215-49.58,51.343-58,94q-1.5,22.5-3,45H459c0.554-35.59-3.343-63.034-14-87-26.93-60.559-109.753-89.862-173-43-24.438,18.107-40.66,45.706-48,81-3.468,16.675,2.786,47.4-5,61-45.925-11.434-158.074,14.216-170-28-3.066-10.853,7.933-10.979,10-17V361H50l-1-52,12-11,1-20c2.79-15.423,8.028-26.914,16-37,38.739-49.011,166.423-68.22,244-83l64-3c31.172-8.757,63.081-31.229,90-47,57.748-33.832,121.674-62.862,194-80,44.345-10.508,97.2-7.327,143-15ZM328,274c146.619-2.608,155.2,182.455,32,207-73.915,14.726-142.954-60.709-119-133C257.6,297.919,281.51,293.211,328,274Zm824,0c147.89-2.731,152.63,185.849,23,208-76.6,13.09-136.38-74.406-109-142,10.59-26.14,31.74-48.567,58-59Z" fill="#252525" stroke="#444" stroke-width="5"/> 
+          <path id="Lateral_Direita" class="car-part-active" data-parte="Lateral Direita" d="M1394,161s-24.69,16.446-21,28c-29.05,2.709-79.22.8-59,42s110,22,110,22c4.32,22.13-1.87,27.68,39,53,1.58,4.777,3.71,30.325-4,39s-133.61,12.027-160,57c-13.52,1.8-19,0-19,0s9.07-66.062-27-105c-54.18-58.487-166.06-78.2-211,100-38.5-.524-72-1-72-1v-4s35.44,7.246,73-74c6.74-14.583,17.04-23.354,35-46,34.42-26.751,70.67-37.311,67-76s-21.12-89.191-50-110-79-42-79-42l6-11s64.95-20.411,253,107C1279.34,142.937,1352.8,158.387,1394,161Z"/> 
+          <path id="vidro_traseriro_Direito" class="car-part-active" data-parte="Vidro Traseiro Dir" d="M845,49c63.06-.914,175.79-1.171,207,32q-1.995,32-4,64L837,157Q841,103.006,845,49Zm220,39a105.408,105.408,0,0,1,47,53l-51,3Q1062.995,116,1065,88Z"/> 
+          <path id="vidro_dianteiro_Direito" class="car-part-active" data-parte="Vidro Dianteiro Dir" d="M800,50h5L785,161,556,175l2-1c2.528-4.363,5.2-15.38,9-19,6.914-3.455,12.125-3.27,15-11,5.529-15.028-25.494-19.585-35-17,6.314-8.537,19.677-12.418,29-18,41.3-24.729,82.773-41.3,140-52Z"/> 
+          <path id="porta_traseira_Direita" class="car-part-active" data-parte="Porta Traseira Dir" d="M815,162l237-14q2.505-33,5-66c0.67,0.667,1.33,1.333,2,2h2q-1.995,32-4,64h10l50-4v-1c-19.4-54.3-74.74-81.353-137-93l-72-4-67-1q-4,55.994-8,112l-17,1q6.5-58.993,13-118c108.8-11.227,218.15,5.9,270,63,11.05,12.17,24.58,25.537,27,46L815,167v-5Zm2,219c-0.088-62.462-10.123-151.99-2-211l313-18c4.05,12.918,14.78,28.071,12,46-5.99,38.689-36.17,45.658-61,65l-33,39c-12.09,18.144-35.05,72.294-55,78Zm248-204c-6.32,3.144-5.92,1.73-10,7-0.24,3.477-4.89,5.835-8,5-9.21,5.879-25.55,1.9-18,16,8.2,1.209,23.29-5.656,27,1,3.52,6.31,10.37,12.272,24,6,5.89-2.711,9.36-6.48,14-9,7.59-4.121,15.34-1.2,21-5,0.33-1,.67-2,1-3-0.66-5.846-1.62-7.985-6-10-5.21-.409-7.95.07-15,0C1079.49,184.846,1089.65,176.937,1065,177Z"/> 
+          <path id="porta_dianteira_Direita" class="car-part-active" data-parte="Porta Dianteira Dir" d="M825,40q-9,81.992-18,164q3,88.491,6,177l-222,2c-33.714,0-76.579,6.526-96-5-8.511-23.244-9.475-54.846-17-79-8.13-26.1-24.1-50.011-27-78-1.5-14.481,0-44.818,5-52L580,93C644.333,56.071,723.82,39.69,825,40ZM790,164q10.5-59.494,21-119c-91.327,1.069-168.732,17.859-227,52-15.656,9.174-31.675,23.082-47,31-25.431,13.139-25.187,8.23-44,29-0.293,8.783,1.039,13.09,4,18,27.464,10.795,66.952,6.285,101,1Zm-39,22a16.206,16.206,0,0,0-13,14c-0.739,6.273-15.511,4.545-30,7-0.008,6.328-.143,7.582,2.009,11,5.67,0.948,24.822-6.674,26.991,2,2,8,30.612,20.036,37-4-0.028.073-1.7-5.013,22-5q-0.5-4-1-8c-2.083-7.587-16.282.22-23-5C763.321,191.257,772.026,187.009,751,186Z"/> 
+          <path id="paralama_Direito" class="car-part-active" data-parte="Para-lama Dir" d="M74,339c-0.311-7.455-11.895-60.75-1-83,12.557-18.393,47.471-26.033,50-19-0.315,6.071-41.49,22.982-20,50,35.653,6.573,127.886,1.048,93-48-9.046-2.784-21.681-4.54-32-5-75.943,8.913-13.684-47.461,300-80-0.5,1.13-16.769,8.15-18,19-0.4-11.367-5.907,32.271,3,64,8.157,29.058,21.526,54.458,29,86,3,18,8,39,11,57,4.45,7.679,14.064,5.012,20,11H477c1.21-83.6-55.888-142.19-128-148-14.656-1.181-76.954,13.921-211,80C139.074,350.827,122.073,338.043,74,339Z"/> 
+          <path id="roda_dianteira_direita_" class="car-part-active" data-parte="Roda Dianteira Dir" d="M335.451,313.31c91.565-7.176,97.794,123,19.809,134.7C269.229,460.919,246.172,336.514,335.451,313.31Z"/> 
+          <path id="roda_traseira_direita" class="car-part-active" data-parte="Roda Traseira Dir" d="M1156.88,311.749c14.16-.231,26.21.517,36.28,4.773,26.38,11.159,53.06,45.537,36.27,84.016-9.49,21.763-29.58,33.376-55.37,39.143-10.95,2.45-23.5-1.377-30.55-3.819-26.31-9.11-60.03-40.16-43.92-80.2a71.2,71.2,0,0,1,38.19-39.144C1143.51,314.13,1151.71,315,1156.88,311.749Z"/> 
+        </g>
+
+        <g transform="translate(607, 1137) scale(0.60) translate(-350, -250)">
+          <path id="tr_base_carro" class="car-base-outline" d="M310,51c54.578,3.278,117.839-2.675,170,6,15.921,2.648,32.343.354,44,7,33.482,19.088,54.014,88.856,71,127l2-1c4.12-37.906,61.367-30.236,70-6,12.566,35.276-32.861,32.578-54,40,27.586,57.788,8.983,131.442,9,207,0,22.914,6.813,72.631-5,86-5.27,5.964-15.783,6.969-27,7-30.526.085-38-4.234-38-35V462c-23.433-4.79-21.368-7.036-37-20l-137,3-206-3c-9.224,13.78-18.257,17-36,20,5.185,17.981,2.067,52.606-9,59-13.923,8.045-50.369,3.838-57-6-10.906-16.18-4-63.929-4-88,0.014-79.282-11.712-136.853,9-203H73c-21.12-7.535-46.519-3.37-52-26-8.5-35.1,41.8-37.16,63-29,3.141,6.2,5,14.763,8,22l2-1c6.983-34.873,49.231-121.847,80-130l105-8Z" fill="#252525" stroke="#444" stroke-width="5"/> 
+          <path id="tr_lanterna_e" class="car-part-active" data-parte="Lanterna Esq" d="M199.992,225.566S102.93,217.247,96.557,230.2s-4.613,46.388-.421,53.725,87.9,7.917,96.25,3.227S216.243,231.6,199.992,225.566Z"/> 
+          <path id="tr_lanterna_d" class="car-part-active" data-parte="Lanterna Dir" d="M594.232,284.882s-76.22,10.74-93.139,3.993-26.061-56.151-17.376-61.084,97.271-10.86,108.706,1.219S594.232,284.882,594.232,284.882Z"/> 
+          <path id="tr_portamalas" class="car-part-active" data-parte="Porta-malas (Traseira)" d="M150,206l182-10,58,2,149,8-4,14c-19.186-.647-51.7-3.57-58,10-7.717,13.49,4.807,52.6,13,59,4.883,3.817,15.036,4.559,23,5-1.785,10.465-6.241,26.173-14,31-16.218,10.09-48.7,1.694-71,5-40.887,6.063-123.213,6.266-164,0-27.956-4.3-59.633,3.581-79-8l-11-28c32.784,0.256,45.3-34.784,37-66-14.314-10.215-38-3.64-59-9Q151,212.5,150,206Zm146,33c-1.723,1.61-2.59,1.875-4,4-4.3,10.01-2.016,39.887,2,47,19.572,1.2,85.228,6.3,103-2,1.952-13.162,3.108-37.987-2-48Z"/> 
+          <path id="tr_vidro" class="car-part-active" data-parte="Vidro Traseiro (Traseira)" d="M328,82c37.187,1.464,167.586-1.176,194,12,9.57,10.306,15.855,26.846,21,40,3.861,9.871,15.68,30.106,10,44-1.355,2.055-1.12,1.609-3,3l-145-3c-4.057-6.032-10.969-15.233-18-18H300l-18,18-113,1c-9.476.807-26.053,2.577-34-1-0.683-13.314,4.126-27.682,9-40,6.254-15.808,11.176-39.008,26-46,18.585-8.766,90.673-8.985,118-9Z"/> 
+          <path id="tr_parachoque" class="car-part-active" data-parte="Para-choque Traseiro" d="M62,293l36,19s10.065,26.457,40,30,390.651,12.692,414,1,31.825-17.548,35-25c18-10.417,38.978-17.348,40-21s-8.4,149.219-20,149c-9.816,5.119-53.7,15.984-62,15s-17.3-2.615-30-19c-19.817.815-345,0-345,0s-11.269,24.136-34,19-52-11-52-11S54.291,340.45,62,293Z"/> 
+        </g>
+      </svg>
+    `;
+
+    // --- COMPONENTE: DIAGRAMA DO CARRO SVG (ESTÁTICO) ---
+    const CarDiagram = ({ damagedParts = [] }) => {
+      const wrapRef = useRef(null);
+
+      useEffect(() => {
+        const root = wrapRef.current;
+        if (!root) return;
+
+        const normalized = (damagedParts || []).map(p => String(p).toLowerCase());
+        const damagedSet = new Set(normalized);
+        const els = root.querySelectorAll('[data-parte]');
+
+        els.forEach(el => {
+          const parte = (el.getAttribute('data-parte') || '').toLowerCase();
+          const isMatch =
+            damagedSet.has(parte) ||
+            Array.from(damagedSet).some(d => d && (parte.includes(d) || d.includes(parte)));
+
+          if (isMatch) el.classList.add('damaged');
+          else el.classList.remove('damaged');
+        });
+      }, [damagedParts]);
+
+      return (
+        <div
+          className="car-preview-box"
+          ref={wrapRef}
+          dangerouslySetInnerHTML={{ __html: `<div class="svg-wrapper svg-wrapper-static">${CAR_SVG_HTML}</div>` }}
+        />
+      );
+    };
+
+    // --- COMPONENTE: DRAWER (PAINEL LATERAL) ---
+    const BudgetDrawer = ({ orcamento, isOpen, onClose, onUpdateCost }) => {
+      if (!orcamento) return null;
+
+      const valorCobrado = orcamento.total || orcamento.valor || 0;
+      const custo = orcamento.custo || 0;
+      const lucro = valorCobrado - custo;
+      
+      const damagedParts = (() => {
+        if (Array.isArray(orcamento.itens) && orcamento.itens.length) {
+          const parts = [];
+          for (const it of orcamento.itens) {
+            if (!it) continue;
+            if (it.tipo === 'grupo') {
+              const pecas = Array.isArray(it.pecas) ? it.pecas : [];
+              for (const p of pecas) {
+                if (p?.nome) parts.push(p.nome);
+              }
+              continue;
+            }
+            if (it.parte) parts.push(it.parte);
+          }
+          return parts;
+        }
+        return orcamento.danos || [];
+      })();
+      const costRef = useRef(null);
+      const [costInput, setCostInput] = useState(custo === 0 ? '' : String(custo));
+
+      useEffect(() => {
+        setCostInput((orcamento.custo || 0) === 0 ? '' : String(orcamento.custo));
+      }, [orcamento?.id]);
+
+      useEffect(() => {
+        if (isOpen && orcamento.status === 'concluido' && (orcamento.custo || 0) === 0 && costRef.current) {
+          costRef.current.focus();
+        }
+      }, [isOpen, orcamento?.id]);
+
+      const handleCostChange = (e) => {
+        const raw = e.target.value;
+        setCostInput(raw);
+        const next = raw === '' ? 0 : (parseFloat(raw) || 0);
+        onUpdateCost?.(orcamento.id, next);
+      };
+
+      return (
+        <div className={`drawer-overlay ${isOpen ? 'open' : ''}`} onClick={onClose}>
+          <div className="drawer-panel" onClick={e => e.stopPropagation()}>
+            <div className="drawer-header">
+              <h2>Orçamento <span style={{color: 'var(--accent)'}}>#{orcamento.id.toString().slice(-4)}</span></h2>
+              <button className="btn-close" onClick={onClose}>
+                <Icon name="x" size={20} />
+              </button>
+            </div>
+            
+            <div className="drawer-body">
+              {/* Cliente e Veículo */}
+              <div className="drawer-section">
+                <h3><Icon name="user" size={18} /> INFORMAÇÕES GERAIS</h3>
+                <div className="info-grid">
+                  <div className="info-item">
+                    <label>Cliente</label>
+                    <span>{orcamento.cliente?.nome || orcamento.cliente}</span>
+                  </div>
+                  <div className="info-item">
+                    <label>Telefone</label>
+                    <span>{orcamento.cliente?.telefone || '(11) 99999-9999'}</span>
+                  </div>
+                  <div className="info-item">
+                    <label>Veículo</label>
+                    <span>{orcamento.veiculo?.fabricante} {orcamento.veiculo?.modelo || orcamento.veiculo}</span>
+                  </div>
+                  <div className="info-item">
+                    <label>Placa / Cor</label>
+                    <span>{orcamento.veiculo?.placa || orcamento.placa} • {orcamento.veiculo?.cor || 'N/A'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Diagrama Visual */}
+              <div className="drawer-section">
+                <h3><Icon name="camera" size={18} /> INSPEÇÃO VISUAL</h3>
+                <CarDiagram damagedParts={damagedParts} />
+              </div>
+
+              {/* Lista de Serviços */}
+              <div className="drawer-section">
+                <h3><Icon name="clipboard-list" size={18} /> SERVIÇOS E PEÇAS</h3>
+                <div className="services-list">
+                  {(orcamento.itens || []).map((item, idx) => {
+                    if (item?.tipo === 'grupo') {
+                      const pecasTxt = (item.pecas || []).map(p => p.nome).filter(Boolean).join(' • ');
+                      return (
+                        <div key={idx} className="service-row">
+                          <div className="service-main">
+                            <h4>Grupo de peças</h4>
+                            <div className="service-sub">{pecasTxt || '—'}</div>
+                          </div>
+                          <div className="service-price">{formatCurrency(item.valorTotal)}</div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div key={idx} className="service-row">
+                        <div className="service-main">
+                          <h4>{item.parte}</h4>
+                          <div className="service-sub">{item.tipo} • {item.servicos?.join(' + ') || 'Reparo Técnico'}</div>
+                        </div>
+                        <div className="service-price">{formatCurrency(item.maoDeObra)}</div>
+                      </div>
+                    );
+                  })}
+                  {(!orcamento.itens || orcamento.itens.length === 0) && (orcamento.danos || []).map((d, idx) => (
+                    <div key={idx} className="service-row">
+                      <div className="service-main">
+                        <h4>{d}</h4>
+                        <div className="service-sub">Reparo Técnico</div>
+                      </div>
+                      <div className="service-price">{formatCurrency(orcamento.valor / orcamento.danos.length)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Resumo Financeiro */}
+              <div className="drawer-section">
+                <h3><Icon name="trending-up" size={18} /> RESUMO FINANCEIRO</h3>
+                <div className="financial-card">
+                  <div className="financial-row">
+                    <span>Valor Bruto Serviços</span>
+                    <span>{formatCurrency(valorCobrado)}</span>
+                  </div>
+                  <div className="financial-row">
+                    <span>Custo Operacional (Peças/MO)</span>
+                    <div className="cost-input-group">
+                      <span className="cost-prefix">R$</span>
+                      <input
+                        ref={costRef}
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        className="cost-input"
+                        placeholder="0"
+                        value={costInput}
+                        onChange={handleCostChange}
+                      />
+                    </div>
+                  </div>
+                  <div className="financial-row profit">
+                    <span>Margem de Lucro Estimada</span>
+                    <span>{formatCurrency(lucro)}</span>
+                  </div>
+                  <div className="financial-row total">
+                    <span>VALOR COBRADO</span>
+                    <span>{formatCurrency(valorCobrado)}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // --- COMPONENTE: CARD DO KANBAN ---
+    const BudgetCard = ({ item, onClick, onMenu }) => {
+      const valorCobrado = item.total || item.valor || 0;
+      const lucro = valorCobrado - (item.custo || 0);
+      const dateLabel = item.date
+        ? new Date(`${item.date}T00:00:00`).toLocaleDateString('pt-BR')
+        : new Date().toLocaleDateString('pt-BR');
+
+      return (
+        <div className="budget-card" onClick={() => onClick(item)} data-id={item.id}>
+          <div className="card-header">
+            <div>
+              <h4 className="client-name">{item.cliente?.nome || item.cliente || 'Cliente'}</h4>
+              <div className="vehicle-model">{item.veiculo?.modelo || item.veiculo}</div>
+            </div>
+            <button
+              type="button"
+              className="card-menu-btn"
+              aria-label="Opções"
+              onClick={(e) => {
+                e.stopPropagation();
+                onMenu(e, item);
+              }}
+            >
+              <Icon name="more-horizontal" size={18} color="currentColor" />
+            </button>
+          </div>
+          
+          <div className="card-tags">
+            <div className="tag-pill"><Icon name="hash" size={12} /> {item.veiculo?.placa || item.placa}</div>
+            <div className="tag-pill"><Icon name="calendar" size={12} /> {dateLabel}</div>
+          </div>
+          
+          <div className="card-footer">
+            <div className="price-text">{formatCurrency(valorCobrado)}</div>
+            {item.status === 'concluido' && (
+              <div className="profit-text">
+                <Icon name="trending-up" size={14} /> {formatCurrency(lucro)}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    // --- COMPONENTE: COLUNA DO KANBAN ---
+    const Column = ({ id, title, count, items, onCardClick, onCardMenu }) => {
+      const colRef = useRef(null);
+      const colClass = id === 'espera' ? 'col-wait' : id === 'andamento' ? 'col-progress' : 'col-done';
+
+      return (
+        <div className={`kanban-column ${colClass}`}>
+          <div className="column-header">
+            <div className="column-title-box">
+              <div className="column-indicator" style={{background: 'var(--indicator-color)'}}></div>
+              <h3>{title}</h3>
+            </div>
+            <span className="count-pill">{count}</span>
+          </div>
+          <div className="column-cards" ref={colRef} data-status={id}>
+            {items.map(item => <BudgetCard key={item.id} item={item} onClick={onCardClick} onMenu={onCardMenu} />)}
+          </div>
+        </div>
+      );
+    };
+
+    // --- COMPONENTE PRINCIPAL: APP ---
+    const App = () => {
+      const [items, setItems] = useState([]);
+      const [searchTerm, setSearchTerm] = useState('');
+      const [searchDate, setSearchDate] = useState('');
+      const [selectedOrcamento, setSelectedOrcamento] = useState(null);
+      const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+      const [activeSidebar, setActiveSidebar] = useState('fluxo');
+      const [menu, setMenu] = useState(null);
+      const [pdfViewer, setPdfViewer] = useState(null);
+
+      useEffect(() => {
+        const raw = localStorage.getItem('oficinaPro_orcamentos');
+        const data = raw ? JSON.parse(raw) : [
+          { id: 'ORC-1024', cliente: {nome: 'João Silva', telefone: '(11) 98877-6655'}, veiculo: {modelo: 'Civic G10', fabricante: 'Honda', placa: 'ABC-1234', cor: 'Prata'}, total: 1250, status: 'espera', custo: 0, danos: ['Capô', 'Para-brisa'] },
+          { id: 'ORC-1025', cliente: {nome: 'Maria Souza', telefone: '(11) 97766-5544'}, veiculo: {modelo: 'Corolla XEi', fabricante: 'Toyota', placa: 'DFG-5678', cor: 'Branco'}, total: 850, status: 'andamento', custo: 0, danos: ['Porta Dianteira'] },
+          { id: 'ORC-1026', cliente: {nome: 'Carlos Luz', telefone: '(11) 96655-4433'}, veiculo: {modelo: 'Golf GTI', fabricante: 'VW', placa: 'GHI-9012', cor: 'Preto'}, total: 2100, status: 'concluido', custo: 450, danos: ['Teto', 'Para-lama Traseiro'] }
+        ];
+        const mapped = (Array.isArray(data) ? data : []).map(o => {
+          const status = o?.status;
+          if (status === 'orcamento') return { ...o, status: 'espera' };
+          if (status === 'em_andamento') return { ...o, status: 'andamento' };
+          if (status === 'atendido') return { ...o, status: 'concluido' };
+          return o;
+        });
+        setItems(mapped);
+      }, []);
+
+      useEffect(() => {
+        if (items.length > 0 && activeSidebar === 'fluxo') initSortable();
+      }, [items, activeSidebar]);
+
+      useEffect(() => {
+        if (!menu) return;
+        const onDown = (e) => {
+          if (e.target.closest('.card-menu-pop')) return;
+          setMenu(null);
+        };
+        document.addEventListener('mousedown', onDown);
+        return () => document.removeEventListener('mousedown', onDown);
+      }, [menu]);
+
+      useEffect(() => {
+        return () => {
+          if (pdfViewer?.blobUrl) URL.revokeObjectURL(pdfViewer.blobUrl);
+        };
+      }, [pdfViewer?.blobUrl]);
+
+      const initSortable = () => {
+        ['espera', 'andamento', 'concluido'].forEach(status => {
+          const el = document.querySelector(`[data-status="${status}"]`);
+          if (el && !el.sortable) {
+            new Sortable(el, {
+              group: 'kanban',
+              animation: 150,
+              ghostClass: 'sortable-ghost',
+              filter: '.card-menu-btn',
+              preventOnFilter: false,
+              onEnd: (evt) => {
+                const id = evt.item.dataset.id;
+                const newStatus = evt.to.dataset.status;
+                updateStatus(id, newStatus);
+              }
+            });
+            el.sortable = true;
+          }
+        });
+      };
+
+      const updateStatus = (id, newStatus) => {
+        setItems(prev => {
+          const budget = prev.find(o => o.id === id);
+          const updated = prev.map(o => o.id === id ? { ...o, status: newStatus } : o);
+          localStorage.setItem('oficinaPro_orcamentos', JSON.stringify(updated));
+          if (newStatus === 'concluido' && budget) {
+             setSelectedOrcamento({...budget, status: newStatus});
+             setIsDrawerOpen(true);
+          }
+          return updated;
+        });
+      };
+
+      const filteredItems = useMemo(() => {
+        const s = searchTerm.toLowerCase();
+        const hasText = Boolean(s);
+
+        return items.filter(i => {
+          if (searchDate && String(i?.date || '') !== String(searchDate)) return false;
+
+          if (!hasText) return true;
+
+          const nome = (i.cliente?.nome || i.cliente || '').toLowerCase();
+          const modelo = (i.veiculo?.modelo || '').toLowerCase();
+          const fabricante = (i.veiculo?.fabricante || '').toLowerCase();
+          const placa = (i.veiculo?.placa || i.placa || '').toLowerCase();
+          const dateYmd = String(i?.date || '').toLowerCase();
+          const datePt = i?.date ? new Date(`${i.date}T00:00:00`).toLocaleDateString('pt-BR').toLowerCase() : '';
+
+          return (
+            nome.includes(s) ||
+            modelo.includes(s) ||
+            fabricante.includes(s) ||
+            placa.includes(s) ||
+            dateYmd.includes(s) ||
+            datePt.includes(s)
+          );
+        });
+      }, [items, searchTerm, searchDate]);
+
+      const handleCardClick = (orc) => {
+        setSelectedOrcamento(orc);
+        setIsDrawerOpen(true);
+      };
+
+      const handleCardMenu = (e, orc) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const width = 210;
+        const height = 104;
+
+        let left = rect.right + 10;
+        let top = rect.top - 8;
+        if (left + width > window.innerWidth - 10) left = rect.left - width - 10;
+        if (top + height > window.innerHeight - 10) top = window.innerHeight - height - 10;
+        if (top < 10) top = 10;
+
+        setMenu({ id: orc.id, top, left, orcamento: orc });
+      };
+
+      const deleteBudget = (id) => {
+        setItems(prev => {
+          const updated = prev.filter(o => o.id !== id);
+          localStorage.setItem('oficinaPro_orcamentos', JSON.stringify(updated));
+          return updated;
+        });
+        try {
+          const store = loadPdfStore();
+          if (store && store[id]) {
+            delete store[id];
+            savePdfStore(store);
+          }
+        } catch {}
+        if (selectedOrcamento?.id === id) {
+          setIsDrawerOpen(false);
+          setSelectedOrcamento(null);
+        }
+        setMenu(null);
+      };
+
+      const openPdfViewer = (orcamento) => {
+        const store = loadPdfStore();
+        const entry = store?.[orcamento.id];
+        const dataUri = entry?.dataUri || entry;
+        if (!dataUri) {
+          alert('PDF ainda não está disponível para este orçamento.');
+          return;
+        }
+        const blobUrl = dataUriToBlobUrl(dataUri);
+        if (!blobUrl) {
+          alert('Não foi possível abrir o PDF.');
+          return;
+        }
+        setPdfViewer({ id: orcamento.id, blobUrl, dataUri, filename: buildPdfFilename(orcamento) });
+      };
+
+      return (
+        <div className="app-shell">
+          <aside className="sidebar">
+            <div
+              className={`sidebar-icon ${activeSidebar === 'home' ? 'active' : ''}`}
+              onClick={() => {
+                setActiveSidebar('home');
+                window.location.href = '../index.html';
+              }}
+            >
+              <Icon name="home" size={24} />
+            </div>
+
+            <div
+              className={`sidebar-icon ${activeSidebar === 'fluxo' ? 'active' : ''}`}
+              onClick={() => {
+                setActiveSidebar('fluxo');
+                window.location.href = 'kanban.html';
+              }}
+            >
+              <Icon name="users" size={24} />
+            </div>
+
+            <div className="sidebar-icon" style={{marginTop: 'auto'}}>
+              <Icon name="log-out" size={24} />
+            </div>
+          </aside>
+
+          <main className="main-content">
+            <header className="top-header">
+              <div className="header-title">
+                <h1>Fluxo de <span style={{color: 'var(--accent)'}}>Serviços</span></h1>
+              </div>
+
+              <div className="search-wrapper">
+                <div className="search-text">
+                  <Icon name="search" size={18} className="search-icon" />
+                  <input 
+                    type="text" 
+                    className="search-input" 
+                    placeholder="Buscar cliente, marca, modelo, placa ou data..." 
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                </div>
+
+                <input
+                  type="date"
+                  className="search-date"
+                  aria-label="Filtrar por data"
+                  value={searchDate}
+                  onChange={(e) => setSearchDate(e.target.value)}
+                />
+              </div>
+
+              <button className="btn-new" onClick={() => window.location.href='novo-orcamento.html'}>
+                <Icon name="plus" size={18} /> Novo Orçamento
+              </button>
+            </header>
+
+            <div className="kanban-wrapper">
+              <Column id="espera" title="Em Espera" count={filteredItems.filter(i => i.status === 'espera').length} items={filteredItems.filter(i => i.status === 'espera')} onCardClick={handleCardClick} onCardMenu={handleCardMenu} />
+              <Column id="andamento" title="Em Andamento" count={filteredItems.filter(i => i.status === 'andamento').length} items={filteredItems.filter(i => i.status === 'andamento')} onCardClick={handleCardClick} onCardMenu={handleCardMenu} />
+              <Column id="concluido" title="Concluído" count={filteredItems.filter(i => i.status === 'concluido').length} items={filteredItems.filter(i => i.status === 'concluido')} onCardClick={handleCardClick} onCardMenu={handleCardMenu} />
+            </div>
+          </main>
+
+          {menu && (
+            <div className="card-menu-pop" style={{ top: `${menu.top}px`, left: `${menu.left}px` }}>
+              <button
+                type="button"
+                className="card-menu-item"
+                onClick={() => {
+                  setMenu(null);
+                  openPdfViewer(menu.orcamento);
+                }}
+              >
+                <Icon name="file-text" size={16} /> PDF
+              </button>
+              <div className="card-menu-sep"></div>
+              <button
+                type="button"
+                className="card-menu-item danger"
+                onClick={() => deleteBudget(menu.id)}
+              >
+                <Icon name="trash-2" size={16} /> Apagar
+              </button>
+            </div>
+          )}
+
+          {pdfViewer && (
+            <div className="pdf-viewer-overlay" onClick={() => setPdfViewer(null)}>
+              <div className="pdf-viewer-panel" onClick={(e) => e.stopPropagation()}>
+                <div className="pdf-viewer-header">
+                  <div className="pdf-viewer-title">
+                    <Icon name="file-text" size={18} /> PDF do Orçamento
+                  </div>
+                  <div className="pdf-viewer-actions">
+                    <a className="pdf-download-btn" href={pdfViewer.dataUri} download={pdfViewer.filename || `orc-${pdfViewer.id}.pdf`}>
+                      <Icon name="download" size={16} /> Baixar PDF
+                    </a>
+                    <button type="button" className="pdf-close-btn" onClick={() => setPdfViewer(null)}>
+                      <Icon name="x" size={18} />
+                    </button>
+                  </div>
+                </div>
+                <iframe className="pdf-frame" src={pdfViewer.blobUrl} title={`PDF ${pdfViewer.id}`} />
+              </div>
+            </div>
+          )}
+
+          <BudgetDrawer 
+            orcamento={selectedOrcamento} 
+            isOpen={isDrawerOpen} 
+            onClose={() => setIsDrawerOpen(false)} 
+            onUpdateCost={(id, custo) => {
+              setItems(prev => {
+                const updated = prev.map(o => o.id === id ? { ...o, custo } : o);
+                localStorage.setItem('oficinaPro_orcamentos', JSON.stringify(updated));
+                return updated;
+              });
+              setSelectedOrcamento(prev => (prev && prev.id === id ? { ...prev, custo } : prev));
+            }}
+          />
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>

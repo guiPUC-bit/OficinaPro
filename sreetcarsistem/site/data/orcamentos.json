@@ -1,0 +1,20 @@
+[
+  {
+    "id": "orc-0001",
+    "date": "2026-03-26",
+    "status": "atendido",
+    "total": 4200
+  },
+  {
+    "id": "orc-0002",
+    "date": "2026-03-26",
+    "status": "em_andamento",
+    "total": 1800
+  },
+  {
+    "id": "orc-0003",
+    "date": "2026-03-25",
+    "status": "atendido",
+    "total": 950
+  }
+]
